@@ -91,6 +91,57 @@ impl ChainingHashTable {
         }
         power
     }
+
+    fn per_probe(
+        &self,
+        i: usize,
+        hash_value: u64,
+        input: &DataBlock,
+        probe_keys: &[ColumnRef],
+    ) -> Result<DataBlock> {
+        let result: DataBlock = Default::default();
+        let hash_table = self.hash_table.read().unwrap();
+        let probe_result_ptrs = hash_table[hash_value as usize].as_slice();
+        if probe_result_ptrs.is_empty() {
+            // No matched row for current probe row
+            return Ok(result);
+        }
+        let result_block = self.row_space.gather(probe_result_ptrs)?;
+
+        let probe_block = DataBlock::block_take_by_indices(input, &[i as u32])?;
+        let mut replicated_probe_block = DataBlock::empty();
+        for (i, col) in probe_block.columns().iter().enumerate() {
+            let replicated_col = ConstColumn::new(col.clone(), result_block.num_rows()).arc();
+
+            replicated_probe_block = replicated_probe_block
+                .add_column(replicated_col, probe_block.schema().field(i).clone())?;
+        }
+
+        let build_keys = self
+            .build_expressions
+            .iter()
+            .map(|expr| {
+                ExpressionEvaluator::eval(self.ctx.try_get_function_context()?, expr, &result_block)
+            })
+            .collect::<Result<Vec<ColumnRef>>>()?;
+
+        let current_probe_keys: Vec<ColumnRef> = probe_keys
+            .iter()
+            .map(|col| {
+                let column = col.slice(i, 1);
+                ConstColumn::new(column, result_block.num_rows()).arc()
+            })
+            .collect();
+
+        let output = compare_and_combine(
+            replicated_probe_block,
+            result_block,
+            &build_keys,
+            &current_probe_keys,
+            self.ctx.clone(),
+        )?;
+        Ok(output)
+    }
 }
 
 impl HashJoinState for ChainingHashTable {
@@ -119,59 +170,35 @@ impl HashJoinState for ChainingHashTable {
             })
             .collect::<Result<Vec<ColumnRef>>>()?;
 
-        let hash_table = self.hash_table.read().unwrap();
-        let hash_values = self.hash(&probe_keys, input.num_rows())?;
-        let hash_values =
-            ChainingHashTable::apply_bitmask(&hash_values, (hash_table.len() - 1) as u64);
-
-        let mut results: Vec<DataBlock> = vec![];
-        for (i, hash_value) in hash_values.iter().enumerate().take(input.num_rows()) {
-            let probe_result_ptrs = hash_table[*hash_value as usize].as_slice();
-            if probe_result_ptrs.is_empty() {
-                // No matched row for current probe row
-                continue;
-            }
-            let result_block = self.row_space.gather(probe_result_ptrs)?;
-
-            let probe_block = DataBlock::block_take_by_indices(input, &[i as u32])?;
-            let mut replicated_probe_block = DataBlock::empty();
-            for (i, col) in probe_block.columns().iter().enumerate() {
-                let replicated_col = ConstColumn::new(col.clone(), result_block.num_rows()).arc();
-
-                replicated_probe_block = replicated_probe_block
-                    .add_column(replicated_col, probe_block.schema().field(i).clone())?;
-            }
-
-            let build_keys = self
-                .build_expressions
-                .iter()
-                .map(|expr| {
-                    ExpressionEvaluator::eval(
-                        self.ctx.try_get_function_context()?,
-                        expr,
-                        &result_block,
-                    )
-                })
-                .collect::<Result<Vec<ColumnRef>>>()?;
-
-            let current_probe_keys: Vec<ColumnRef> = probe_keys
-                .iter()
-                .map(|col| {
-                    let column = col.slice(i, 1);
-                    ConstColumn::new(column, result_block.num_rows()).arc()
-                })
-                .collect();
-
-            let output = compare_and_combine(
-                replicated_probe_block,
-                result_block,
-                &build_keys,
-                &current_probe_keys,
-                self.ctx.clone(),
-            )?;
-            results.push(output);
+        let mut hash_values = self.hash(&probe_keys, input.num_rows())?;
+        {
+            let hash_table = self.hash_table.read().unwrap();
+            hash_values =
+                ChainingHashTable::apply_bitmask(&hash_values, (hash_table.len() - 1) as u64);
         }
+        let mut results1: Vec<DataBlock> = vec![];
+        let mut results2: Vec<DataBlock> = vec![];
+        let mut results3: Vec<DataBlock> = vec![];
+        let mut results4: Vec<DataBlock> = vec![];
 
+        let mut idx = 0;
+        while idx + 4 <= input.num_rows() {
+            results1.push(self.per_probe(idx, hash_values[idx], input, &probe_keys)?);
+            results2.push(self.per_probe(idx + 1, hash_values[idx + 1], input, &probe_keys)?);
+            results3.push(self.per_probe(idx + 2, hash_values[idx + 2], input, &probe_keys)?);
+            results4.push(self.per_probe(idx + 3, hash_values[idx + 3], input, &probe_keys)?);
+            idx += 4;
+        }
+        while idx < input.num_rows() {
+            results1.push(self.per_probe(idx, hash_values[idx], input, &probe_keys)?);
+            idx += 1;
+        }
+        let mut results =
+            Vec::with_capacity(results1.len() + results2.len() + results3.len() + results4.len());
+        results.extend_from_slice(results1.as_slice());
+        results.extend_from_slice(results2.as_slice());
+        results.extend_from_slice(results3.as_slice());
+        results.extend_from_slice(results4.as_slice());
         Ok(results)
     }
 

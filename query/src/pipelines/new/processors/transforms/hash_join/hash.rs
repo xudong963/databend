@@ -22,9 +22,11 @@ use common_datavalues::Series;
 use common_exception::Result;
 use common_functions::scalars::FunctionContext;
 use common_functions::scalars::FunctionFactory;
+use smallvec::SmallVec;
+use smallvec::ToSmallVec;
 use twox_hash::XxHash64;
 
-pub type HashVector = Vec<u64>;
+pub type HashVector = SmallVec<[u64; 16]>;
 
 pub struct HashUtil;
 
@@ -40,7 +42,7 @@ impl HashUtil {
 
         let result = Series::remove_nullable(&result);
         let result = Series::check_get::<PrimitiveColumn<u64>>(&result)?;
-        Ok(result.values().to_vec())
+        Ok(result.values().to_smallvec())
     }
 
     pub fn combine_hashes(inputs: &[HashVector], size: usize) -> HashVector {

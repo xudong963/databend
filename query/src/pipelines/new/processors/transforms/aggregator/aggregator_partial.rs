@@ -227,7 +227,6 @@ impl<Method: HashMethod + PolymorphicKeysHelper<Method> + Send> Aggregator
         // 1.1 and 1.2.
         let group_columns = Self::group_columns(&self.params.group_columns_name, &block)?;
         let group_keys = self.method.build_keys(&group_columns, block.num_rows())?;
-
         let group_by_two_level_threshold =
             self.ctx.get_settings().get_group_by_two_level_threshold()? as usize;
         if !self.state.is_two_level() && self.state.len() >= group_by_two_level_threshold {
