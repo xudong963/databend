@@ -148,7 +148,8 @@ impl<'a> AggregateRewriter<'a> {
     fn replace_aggregate_function(&mut self, aggregate: &AggregateFunction) -> Result<Scalar> {
         let agg_info = &mut self.bind_context.aggregate_info;
         let mut replaced_args: Vec<Scalar> = Vec::with_capacity(aggregate.args.len());
-
+        let from_count_func = aggregate.func_name.eq_ignore_ascii_case("count")
+            || aggregate.func_name.eq("count_distinct");
         for (i, arg) in aggregate.args.iter().enumerate() {
             let name = format!("{}_arg_{}", &aggregate.func_name, i);
             if let Scalar::BoundColumnRef(column_ref) = arg {
@@ -156,6 +157,7 @@ impl<'a> AggregateRewriter<'a> {
                 agg_info.aggregate_arguments.push(ScalarItem {
                     index: column_ref.column.index,
                     scalar: arg.clone(),
+                    from_count_func: false,
                 });
             } else {
                 let index = self
@@ -184,6 +186,7 @@ impl<'a> AggregateRewriter<'a> {
                 agg_info.aggregate_arguments.push(ScalarItem {
                     index,
                     scalar: arg.clone(),
+                    from_count_func: false,
                 });
             }
         }
@@ -206,6 +209,7 @@ impl<'a> AggregateRewriter<'a> {
         agg_info.aggregate_functions.push(ScalarItem {
             scalar: replaced_agg.clone().into(),
             index,
+            from_count_func,
         });
         agg_info.aggregate_functions_map.insert(
             replaced_agg.display_name.clone(),
@@ -373,6 +377,7 @@ impl<'a> Binder {
                     bind_context.aggregate_info.group_items.push(ScalarItem {
                         scalar,
                         index: column_binding.index,
+                        from_count_func: false,
                     });
                     entry.insert(bind_context.aggregate_info.group_items.len() - 1);
                 }
@@ -412,6 +417,7 @@ impl<'a> Binder {
             bind_context.aggregate_info.group_items.push(ScalarItem {
                 scalar: scalar_expr.clone(),
                 index,
+                from_count_func: false,
             });
             bind_context.aggregate_info.group_items_map.insert(
                 format!("{:?}", &scalar_expr),
@@ -484,6 +490,7 @@ impl<'a> Binder {
             bind_context.aggregate_info.group_items.push(ScalarItem {
                 scalar: scalar.clone(),
                 index,
+                from_count_func: false,
             });
             bind_context.aggregate_info.group_items_map.insert(
                 format!("{:?}", &scalar),

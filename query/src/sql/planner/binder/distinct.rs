@@ -46,6 +46,7 @@ impl Binder {
                     Ok(ScalarItem {
                         scalar,
                         index: item.index,
+                        from_count_func: item.from_count_func,
                     })
                 } else {
                     Ok(item)
@@ -67,6 +68,7 @@ impl Binder {
             .map(|v| ScalarItem {
                 scalar: Scalar::BoundColumnRef(BoundColumnRef { column: v.clone() }),
                 index: v.index,
+                from_count_func: false,
             })
             .collect();
 

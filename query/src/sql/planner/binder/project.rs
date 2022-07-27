@@ -54,6 +54,7 @@ impl<'a> Binder {
             } else {
                 self.create_column_binding(None, None, item.alias.clone(), item.scalar.data_type())
             };
+            let mut from_count_func = false;
             let scalar = if let Scalar::SubqueryExpr(SubqueryExpr {
                 typ,
                 subquery,
@@ -82,9 +83,18 @@ impl<'a> Binder {
             } else {
                 item.scalar.clone()
             };
+
+            if let Scalar::AggregateFunction(agg_func) = &item.scalar {
+                if agg_func.func_name.eq_ignore_ascii_case("count")
+                    || agg_func.func_name.eq("count_distinct")
+                {
+                    from_count_func = true;
+                }
+            }
             scalars.insert(column_binding.index, ScalarItem {
                 scalar,
                 index: column_binding.index,
+                from_count_func,
             });
             columns.push(column_binding);
         }
@@ -108,6 +118,7 @@ impl<'a> Binder {
                     Ok(ScalarItem {
                         scalar,
                         index: item.index,
+                        from_count_func: item.from_count_func,
                     })
                 } else {
                     Ok(item.clone())

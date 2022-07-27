@@ -168,6 +168,7 @@ impl<'a> Binder {
                     scalar_items.insert(column_binding.index, ScalarItem {
                         scalar: rewrite_scalar,
                         index: column_binding.index,
+                        from_count_func: false,
                     });
                 }
             }
@@ -224,7 +225,11 @@ impl<'a> Binder {
                         let mut group_checker = GroupingChecker::new(from_context);
                         scalar = group_checker.resolve(&scalar, None)?;
                     }
-                    scalars.push(ScalarItem { scalar, index });
+                    scalars.push(ScalarItem {
+                        scalar,
+                        index,
+                        from_count_func: false,
+                    });
                 }
             }
             let order_by_item = SortItem {

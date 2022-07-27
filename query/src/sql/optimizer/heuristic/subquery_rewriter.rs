@@ -359,6 +359,7 @@ impl SubqueryRewriter {
                         }
                         .into(),
                         index: agg_func_index,
+                        from_count_func: true,
                     }],
                     from_distinct: false,
                     mode: AggregateMode::Initial,
@@ -398,6 +399,7 @@ impl SubqueryRewriter {
                     items: vec![ScalarItem {
                         scalar: compare.into(),
                         index: compare_index,
+                        from_count_func: false,
                     }],
                 };
 

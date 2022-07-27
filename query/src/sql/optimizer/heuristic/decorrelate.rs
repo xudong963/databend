@@ -17,7 +17,10 @@ use std::collections::HashSet;
 use common_datavalues::type_coercion::merge_types;
 use common_datavalues::BooleanType;
 use common_datavalues::DataTypeImpl;
+use common_datavalues::DataValue;
+use common_datavalues::Int64Type;
 use common_datavalues::NullableType;
+use common_datavalues::UInt64Type;
 use common_exception::ErrorCode;
 use common_exception::Result;
 
@@ -35,6 +38,7 @@ use crate::sql::plans::AndExpr;
 use crate::sql::plans::BoundColumnRef;
 use crate::sql::plans::CastExpr;
 use crate::sql::plans::ComparisonExpr;
+use crate::sql::plans::ConstantExpr;
 use crate::sql::plans::EvalScalar;
 use crate::sql::plans::Filter;
 use crate::sql::plans::FunctionCall;
@@ -480,6 +484,7 @@ impl SubqueryRewriter {
                     columns.extend(flatten_scalar.used_columns().iter());
                 }
                 columns.extend(self.derived_columns.values());
+                dbg!(columns.clone());
                 Ok(SExpr::create_unary(
                     Project { columns }.into(),
                     flatten_plan,
@@ -489,9 +494,37 @@ impl SubqueryRewriter {
                 let flatten_plan = self.flatten(plan.child(0)?, correlated_columns)?;
                 let mut items = Vec::with_capacity(eval_scalar.items.len());
                 for item in eval_scalar.items.iter() {
+                    dbg!(item.from_count_func);
+                    let scalar = if item.from_count_func {
+                        // convert count aggregate function to multi_if function, if count() is null, then 0 else count()
+                        let is_null = Scalar::FunctionCall(FunctionCall {
+                            arguments: vec![item.scalar.clone()],
+                            func_name: "is_null".to_string(),
+                            arg_types: vec![NullableType::new_impl(UInt64Type::new_impl())],
+                            return_type: Box::new(BooleanType::new_impl()),
+                        });
+                        let zero = Scalar::ConstantExpr(ConstantExpr {
+                            value: DataValue::UInt64(0),
+                            data_type: Box::new(UInt64Type::new_impl()),
+                        });
+                        Scalar::FunctionCall(FunctionCall {
+                            arguments: vec![is_null, zero, item.scalar.clone()],
+                            func_name: "multi_if".to_string(),
+                            arg_types: vec![
+                                BooleanType::new_impl(),
+                                UInt64Type::new_impl(),
+                                UInt64Type::new_impl(),
+                            ],
+                            return_type: Box::new(UInt64Type::new_impl()),
+                        })
+                    } else {
+                        item.scalar.clone()
+                    };
+                    dbg!(item.index);
                     let new_item = ScalarItem {
-                        scalar: self.flatten_scalar(&item.scalar, correlated_columns)?,
+                        scalar: self.flatten_scalar(&scalar, correlated_columns)?,
                         index: item.index,
+                        from_count_func: item.from_count_func,
                     };
                     items.push(new_item);
                 }
@@ -511,6 +544,7 @@ impl SubqueryRewriter {
                             column: column_binding,
                         }),
                         index: *derived_column,
+                        from_count_func: false,
                     });
                 }
                 Ok(SExpr::create_unary(
@@ -557,6 +591,7 @@ impl SubqueryRewriter {
                     group_items.push(ScalarItem {
                         scalar,
                         index: item.index,
+                        from_count_func: item.from_count_func,
                     })
                 }
                 for derived_column in self.derived_columns.values() {
@@ -577,6 +612,7 @@ impl SubqueryRewriter {
                             column: column_binding,
                         }),
                         index: *derived_column,
+                        from_count_func: false,
                     });
                 }
                 let mut agg_items = Vec::with_capacity(aggregate.aggregate_functions.len());
@@ -585,6 +621,7 @@ impl SubqueryRewriter {
                     agg_items.push(ScalarItem {
                         scalar,
                         index: item.index,
+                        from_count_func: item.from_count_func,
                     })
                 }
                 Ok(SExpr::create_unary(

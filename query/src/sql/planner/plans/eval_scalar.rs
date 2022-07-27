@@ -37,6 +37,8 @@ pub struct EvalScalar {
 pub struct ScalarItem {
     pub scalar: Scalar,
     pub index: IndexType,
+    // If the scalar item is from count aggregation function, `from_count_func` is true.
+    pub from_count_func: bool,
 }
 
 impl Operator for EvalScalar {
