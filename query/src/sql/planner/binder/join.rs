@@ -41,7 +41,7 @@ use crate::sql::plans::Scalar;
 use crate::sql::plans::ScalarExpr;
 use crate::sql::BindContext;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     #[async_recursion]
     pub(super) async fn bind_join(
         &mut self,

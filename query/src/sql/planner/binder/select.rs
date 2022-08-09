@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 
 use async_recursion::async_recursion;
+use common_ast::ast::Cte;
 use common_ast::ast::Expr;
 use common_ast::ast::Join;
 use common_ast::ast::JoinCondition;
@@ -53,7 +54,7 @@ pub struct SelectItem<'a> {
     pub alias: String,
 }
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(super) async fn bind_select_stmt(
         &mut self,
         bind_context: &BindContext,
@@ -157,8 +158,8 @@ impl<'a> Binder {
     pub(crate) async fn bind_set_expr(
         &mut self,
         bind_context: &BindContext,
-        set_expr: &SetExpr,
-        order_by: &[OrderByExpr],
+        set_expr: &SetExpr<'a>,
+        order_by: &[OrderByExpr<'a>],
     ) -> Result<(SExpr, BindContext)> {
         match set_expr {
             SetExpr::Select(stmt) => self.bind_select_stmt(bind_context, stmt, order_by).await,
@@ -179,8 +180,19 @@ impl<'a> Binder {
     pub(crate) async fn bind_query(
         &mut self,
         bind_context: &BindContext,
-        query: &Query<'_>,
+        query: &Query<'a>,
     ) -> Result<(SExpr, BindContext)> {
+        if let Some(with) = &query.with {
+            for cte in with.ctes.iter() {
+                let table_name = cte.alias.name.name.clone();
+                if self.ctes_map.contains_key(&table_name) {
+                    return Err(ErrorCode::SemanticError(format!(
+                        "duplicate cte {table_name}"
+                    )));
+                }
+                self.ctes_map.insert(table_name, cte.clone());
+            }
+        }
         let (mut s_expr, mut bind_context) = match query.body {
             SetExpr::Select(_) | SetExpr::Query(_) => {
                 self.bind_set_expr(bind_context, &query.body, &query.order_by)
@@ -251,8 +263,8 @@ impl<'a> Binder {
     pub(super) async fn bind_set_operator(
         &mut self,
         bind_context: &BindContext,
-        left: &SetExpr<'_>,
-        right: &SetExpr<'_>,
+        left: &SetExpr<'a>,
+        right: &SetExpr<'a>,
         op: &SetOperator,
         all: &bool,
     ) -> Result<(SExpr, BindContext)> {

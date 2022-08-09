@@ -40,7 +40,7 @@ use crate::sql::plans::SubqueryExpr;
 use crate::sql::plans::SubqueryType;
 use crate::sql::IndexType;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(super) fn analyze_projection(
         &mut self,
         select_list: &SelectList<'a>,

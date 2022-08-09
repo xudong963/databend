@@ -29,7 +29,7 @@ use crate::sql::plans::ScalarItem;
 use crate::sql::BindContext;
 use crate::sql::IndexType;
 
-impl Binder {
+impl Binder<'_> {
     pub(super) fn bind_distinct(
         &self,
         bind_context: &BindContext,

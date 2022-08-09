@@ -23,7 +23,7 @@ use super::Binder;
 use crate::sql::planner::semantic::TypeChecker;
 use crate::sql::plans::Plan;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_set_variable(
         &mut self,
         bind_context: &BindContext,

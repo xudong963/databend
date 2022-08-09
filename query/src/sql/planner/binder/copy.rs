@@ -40,7 +40,7 @@ use crate::sql::statements::parse_copy_file_format_options;
 use crate::sql::statements::parse_stage_location_v2;
 use crate::sql::BindContext;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_copy(
         &mut self,
         bind_context: &BindContext,

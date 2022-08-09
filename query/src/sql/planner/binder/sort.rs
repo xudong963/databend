@@ -59,7 +59,7 @@ pub struct OrderItem<'a> {
     pub need_eval_scalar: bool,
 }
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(super) async fn analyze_order_items(
         &mut self,
         from_context: &BindContext,

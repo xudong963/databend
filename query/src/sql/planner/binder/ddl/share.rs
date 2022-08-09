@@ -24,7 +24,7 @@ use crate::sql::plans::GrantShareObjectPlan;
 use crate::sql::plans::Plan;
 use crate::sql::plans::RevokeShareObjectPlan;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_create_share(
         &mut self,
         stmt: &CreateShareStmt<'a>,

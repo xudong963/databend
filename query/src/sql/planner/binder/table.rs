@@ -15,9 +15,11 @@
 use std::sync::Arc;
 
 use common_ast::ast::Indirection;
+use common_ast::ast::Query;
 use common_ast::ast::SelectStmt;
 use common_ast::ast::SelectTarget;
 use common_ast::ast::Statement;
+use common_ast::ast::TableAlias;
 use common_ast::ast::TableReference;
 use common_ast::ast::TimeTravelPoint;
 use common_ast::parser::parse_sql;
@@ -47,7 +49,7 @@ use crate::storages::NavigationPoint;
 use crate::storages::Table;
 use crate::table_functions::TableFunction;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(super) async fn bind_one_table(
         &mut self,
         bind_context: &BindContext,
@@ -93,6 +95,30 @@ impl<'a> Binder {
                 alias,
                 travel_point,
             } => {
+                let table_name = normalize_identifier(table, &self.name_resolution_ctx).name;
+                // Check Cte
+                let ctes = self.ctes_map.clone();
+                if let Some(cte) = ctes.get(&table_name) {
+                    let mut table_alias = TableAlias {
+                        name: alias
+                            .as_ref()
+                            .map(|alias| alias.name.clone())
+                            .unwrap_or(table.clone()),
+                        columns: cte.alias.columns.clone(),
+                    };
+                    if let Some(alias) = alias {
+                        for (idx, col_alias) in alias.columns.iter().enumerate() {
+                            if idx < cte.alias.columns.len() {
+                                table_alias.columns[idx] = col_alias.clone();
+                            } else {
+                                table_alias.columns.push(col_alias.clone());
+                            }
+                        }
+                    }
+                    return self
+                        .bind_subquery(bind_context, &cte.query, &Some(table_alias))
+                        .await;
+                }
                 // Get catalog name
                 let catalog = catalog
                     .as_ref()
@@ -104,8 +130,6 @@ impl<'a> Binder {
                     .as_ref()
                     .map(|ident| normalize_identifier(ident, &self.name_resolution_ctx).name)
                     .unwrap_or_else(|| self.ctx.get_current_database());
-
-                let table = normalize_identifier(table, &self.name_resolution_ctx).name;
 
                 let tenant = self.ctx.get_tenant();
 
@@ -120,7 +144,7 @@ impl<'a> Binder {
                         tenant.as_str(),
                         catalog.as_str(),
                         database.as_str(),
-                        table.as_str(),
+                        table_name.as_str(),
                         &navigation_point,
                     )
                     .await?;
@@ -222,14 +246,21 @@ impl<'a> Binder {
                 span: _,
                 subquery,
                 alias,
-            } => {
-                let (s_expr, mut bind_context) = self.bind_query(bind_context, subquery).await?;
-                if let Some(alias) = alias {
-                    bind_context.apply_table_alias(alias, &self.name_resolution_ctx)?;
-                }
-                Ok((s_expr, bind_context))
-            }
+            } => self.bind_subquery(bind_context, subquery, alias).await,
         }
+    }
+
+    async fn bind_subquery(
+        &mut self,
+        bind_context: &BindContext,
+        query: &Query<'a>,
+        alias: &Option<TableAlias<'a>>,
+    ) -> Result<(SExpr, BindContext)> {
+        let (s_expr, mut bind_context) = self.bind_query(bind_context, query).await?;
+        if let Some(alias) = alias {
+            bind_context.apply_table_alias(alias, &self.name_resolution_ctx)?;
+        }
+        Ok((s_expr, bind_context))
     }
 
     fn bind_base_table(

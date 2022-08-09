@@ -20,7 +20,7 @@ use crate::sql::planner::binder::BindContext;
 use crate::sql::planner::binder::Binder;
 use crate::sql::plans::Plan;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(super) async fn bind_kill_stmt(
         &mut self,
         _bind_context: &BindContext,

@@ -34,7 +34,7 @@ use crate::sessions::TableContext;
 use crate::sql::plans::Plan;
 use crate::sql::Binder;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_grant(
         &mut self,
         stmt: &GrantStmt,

@@ -25,7 +25,7 @@ use crate::sql::binder::Binder;
 use crate::sql::planner::semantic::normalize_identifier;
 use crate::sql::plans::Plan;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_create_view(
         &mut self,
         stmt: &CreateViewStmt<'a>,

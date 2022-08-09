@@ -45,7 +45,7 @@ use crate::sql::plans::Plan;
 use crate::sql::plans::RewriteKind;
 use crate::sql::BindContext;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_show_databases(
         &mut self,
         bind_context: &BindContext,

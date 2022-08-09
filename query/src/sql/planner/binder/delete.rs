@@ -46,7 +46,7 @@ impl QueryASTIRVisitor<HashSet<String>> for DeleteCollectPushDowns {
     }
 }
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_delete(
         &mut self,
         bind_context: &BindContext,

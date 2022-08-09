@@ -23,7 +23,7 @@ use crate::sql::planner::semantic::TypeChecker;
 use crate::sql::plans::Limit;
 use crate::sql::BindContext;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(super) async fn bind_limit(
         &mut self,
         bind_context: &BindContext,

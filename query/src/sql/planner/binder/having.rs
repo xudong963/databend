@@ -27,7 +27,7 @@ use crate::sql::plans::Scalar;
 use crate::sql::BindContext;
 use crate::sql::Binder;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     /// Analyze aggregates in having clause, this will rewrite aggregate functions.
     /// See `AggregateRewriter` for more details.
     pub(super) async fn analyze_aggregate_having(

@@ -32,7 +32,7 @@ use crate::sql::plans::Plan;
 use crate::sql::statements::parse_copy_file_format_options;
 use crate::sql::statements::parse_stage_location;
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_list_stage(
         &mut self,
         location: &str,

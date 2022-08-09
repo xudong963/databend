@@ -115,7 +115,7 @@ impl SelectBuilder {
     }
 }
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub(in crate::sql::planner::binder) async fn bind_show_tables(
         &mut self,
         bind_context: &BindContext,

@@ -12,10 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 pub use aggregate::AggregateInfo;
 pub use bind_context::*;
+use common_ast::ast::Cte;
+use common_ast::ast::Identifier;
+use common_ast::ast::Query;
 use common_ast::ast::Statement;
 use common_ast::parser::parse_sql;
 use common_ast::parser::tokenize_sql;
@@ -42,6 +47,7 @@ use super::plans::RewriteKind;
 use super::semantic::NameResolutionContext;
 use crate::catalogs::CatalogManager;
 use crate::sessions::QueryContext;
+use crate::sql::optimizer::SExpr;
 use crate::sql::planner::metadata::MetadataRef;
 
 mod aggregate;
@@ -73,14 +79,15 @@ mod table;
 /// - Check semantic of query
 /// - Validate expressions
 /// - Build `Metadata`
-pub struct Binder {
+pub struct Binder<'a> {
     ctx: Arc<QueryContext>,
     catalogs: Arc<CatalogManager>,
     name_resolution_ctx: NameResolutionContext,
     metadata: MetadataRef,
+    ctes_map: HashMap<String, Cte<'a>>,
 }
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     pub fn new(
         ctx: Arc<QueryContext>,
         catalogs: Arc<CatalogManager>,
@@ -92,6 +99,7 @@ impl<'a> Binder {
             catalogs,
             name_resolution_ctx,
             metadata,
+            ctes_map: HashMap::new(),
         }
     }
 

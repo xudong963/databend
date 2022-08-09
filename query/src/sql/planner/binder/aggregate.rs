@@ -212,7 +212,7 @@ impl<'a> AggregateRewriter<'a> {
     }
 }
 
-impl<'a> Binder {
+impl<'a> Binder<'_> {
     /// Analyze aggregates in select clause, this will rewrite aggregate functions.
     /// See `AggregateRewriter` for more details.
     pub(crate) fn analyze_aggregate_select(
