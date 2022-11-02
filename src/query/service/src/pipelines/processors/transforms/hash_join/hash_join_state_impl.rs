@@ -424,6 +424,10 @@ impl HashJoinState for JoinHashTable {
         let unmatched_build_block = self.row_space.gather(&unmatched_build_indexes)?;
         Ok(vec![unmatched_build_block])
     }
+
+    fn inner_join_blocks(&self, blocks: &[DataBlock]) -> Result<Vec<DataBlock>> {
+        Ok(vec![self.rest_block_for_right_join(blocks)?])
+    }
 }
 
 impl JoinHashTable {

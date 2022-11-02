@@ -38,12 +38,14 @@ use common_sql::executor::PhysicalScalar;
 use crate::pipelines::processors::port::InputPort;
 use crate::pipelines::processors::transforms::HashJoinDesc;
 use crate::pipelines::processors::transforms::RightSemiAntiJoinCompactor;
+use crate::pipelines::processors::transforms::TransformInnerJoin;
 use crate::pipelines::processors::transforms::TransformMarkJoin;
 use crate::pipelines::processors::transforms::TransformMergeBlock;
 use crate::pipelines::processors::transforms::TransformRightJoin;
 use crate::pipelines::processors::transforms::TransformRightSemiAntiJoin;
 use crate::pipelines::processors::AggregatorParams;
 use crate::pipelines::processors::AggregatorTransformParams;
+use crate::pipelines::processors::InnerJoinCompactor;
 use crate::pipelines::processors::JoinHashTable;
 use crate::pipelines::processors::MarkJoinCompactor;
 use crate::pipelines::processors::RightJoinCompactor;
@@ -476,6 +478,17 @@ impl PipelineBuilder {
                 join.output_schema()?,
             )
         })?;
+
+        if join.join_type == JoinType::Inner && join.non_equi_conditions.is_empty() {
+            self.main_pipeline.resize(1)?;
+            self.main_pipeline.add_transform(|input, output| {
+                TransformInnerJoin::try_create(
+                    input,
+                    output,
+                    InnerJoinCompactor::create(state.clone()),
+                )
+            })?;
+        }
 
         if join.join_type == JoinType::LeftMark {
             self.main_pipeline.resize(1)?;

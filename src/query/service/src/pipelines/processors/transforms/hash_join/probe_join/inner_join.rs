@@ -103,34 +103,45 @@ impl JoinHashTable {
             }
         }
 
-        probed_blocks.push(self.merge_eq_block(
-            &self.row_space.gather(&build_indexes)?,
-            &DataBlock::block_take_by_indices(input, &probe_indexes)?,
-        )?);
+        let probe_block = DataBlock::block_take_by_indices(input, &probe_indexes)?;
 
-        match &self.hash_join_desc.other_predicate {
-            None => Ok(probed_blocks),
-            Some(other_predicate) => {
-                let func_ctx = self.ctx.try_get_function_context()?;
-                let mut filtered_blocks = Vec::with_capacity(probed_blocks.len());
+        if self.hash_join_desc.other_predicate.is_none() {
+            let mut rest_build_indexes = self
+                .hash_join_desc
+                .right_join_desc
+                .rest_build_indexes
+                .write();
+            rest_build_indexes.extend(build_indexes);
+            let mut rest_probe_blocks = self
+                .hash_join_desc
+                .right_join_desc
+                .rest_probe_blocks
+                .write();
+            rest_probe_blocks.push(probe_block);
+            return Ok(probed_blocks);
+        }
 
-                for probed_block in probed_blocks {
-                    if self.interrupt.load(Ordering::Relaxed) {
-                        return Err(ErrorCode::AbortedQuery(
-                            "Aborted query, because the server is shutting down or the query was killed.",
-                        ));
-                    }
+        probed_blocks
+            .push(self.merge_eq_block(&self.row_space.gather(&build_indexes)?, &probe_block)?);
 
-                    let predicate = other_predicate.eval(&func_ctx, &probed_block)?;
-                    let res = DataBlock::filter_block(probed_block, predicate.vector())?;
+        let func_ctx = self.ctx.try_get_function_context()?;
+        let mut filtered_blocks = Vec::with_capacity(probed_blocks.len());
+        let other_predicate = self.hash_join_desc.other_predicate.as_ref().unwrap();
+        for probed_block in probed_blocks {
+            if self.interrupt.load(Ordering::Relaxed) {
+                return Err(ErrorCode::AbortedQuery(
+                    "Aborted query, because the server is shutting down or the query was killed.",
+                ));
+            }
 
-                    if !res.is_empty() {
-                        filtered_blocks.push(res);
-                    }
-                }
+            let predicate = other_predicate.eval(&func_ctx, &probed_block)?;
+            let res = DataBlock::filter_block(probed_block, predicate.vector())?;
 
-                Ok(filtered_blocks)
+            if !res.is_empty() {
+                filtered_blocks.push(res);
             }
         }
+
+        Ok(filtered_blocks)
     }
 }
