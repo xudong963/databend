@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 
 use reqwest::Client;
+use reqwest::ClientBuilder;
 use sqllogictest::ColumnType;
 use sqllogictest::DBOutput;
 
@@ -32,7 +33,7 @@ pub struct ClickhouseHttpClient {
 
 impl ClickhouseHttpClient {
     pub fn create() -> Result<ClickhouseHttpClient> {
-        let client = Client::new();
+        let client = ClientBuilder::new().pool_max_idle_per_host(0).build()?;
         let url = "http://127.0.0.1:8124".to_string();
         Ok(ClickhouseHttpClient {
             client,

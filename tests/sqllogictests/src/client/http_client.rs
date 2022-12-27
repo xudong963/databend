@@ -48,7 +48,10 @@ impl HttpClient {
             HeaderValue::from_str("application/json").unwrap(),
         );
         header.insert("Accept", HeaderValue::from_str("application/json").unwrap());
-        let client = ClientBuilder::new().default_headers(header).build()?;
+        let client = ClientBuilder::new()
+            .default_headers(header)
+            .pool_max_idle_per_host(0)
+            .build()?;
         Ok(HttpClient {
             client,
             session: None,
