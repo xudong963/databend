@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 use common_catalog::plan::InternalColumn;
 use common_catalog::plan::InternalColumnMeta;
+use common_catalog::plan::InternalColumnType;
+use common_catalog::plan::RowIdMeta;
 use common_exception::Result;
 use common_expression::BlockMetaInfoDowncast;
 use common_expression::DataBlock;
@@ -106,8 +108,24 @@ impl Processor for FillInternalColumnProcessor {
             let mut data_block = data_block;
             let num_rows = data_block.num_rows();
             for internal_column in self.internal_columns.values() {
-                let column =
-                    internal_column.generate_column_values(&internal_column_meta, num_rows);
+                let column = match internal_column.column_type {
+                    InternalColumnType::RowId => internal_column.generate_row_id_column_values(
+                        &RowIdMeta::try_from(internal_column_meta.clone())?,
+                        num_rows,
+                    ),
+                    InternalColumnType::BlockName => internal_column
+                        .generate_block_name_column_values(
+                            String::try_from(internal_column_meta.clone())?.as_str(),
+                        ),
+                    InternalColumnType::SegmentName => internal_column
+                        .generate_segment_name_column_values(
+                            String::try_from(internal_column_meta.clone())?.as_str(),
+                        ),
+                    InternalColumnType::SnapshotName => internal_column
+                        .generate_snapshot_name_column_values(
+                            String::try_from(internal_column_meta.clone())?.as_str(),
+                        ),
+                };
                 data_block.add_column(column);
             }
             // output datablock MUST with empty meta
