@@ -17,7 +17,9 @@ use std::collections::HashSet;
 use common_base::base::tokio;
 use common_catalog::plan::InternalColumn;
 use common_catalog::plan::InternalColumnMeta;
+use common_catalog::plan::InternalColumnType;
 use common_catalog::plan::Partitions;
+use common_catalog::plan::RowIdMeta;
 use common_exception::Result;
 use common_expression::DataBlock;
 use common_sql::binder::INTERNAL_COLUMN_FACTORY;
@@ -54,7 +56,22 @@ fn expected_data_block(
             offsets: None,
         };
         for internal_column in internal_columns {
-            let column = internal_column.generate_column_values(&internal_column_meta, num_rows);
+            let column = match internal_column.column_type {
+                InternalColumnType::RowId => internal_column.generate_row_id_column_values(
+                    &RowIdMeta {
+                        segment_idx: block_meta.segment_idx,
+                        block_id: block_meta.block_id,
+                        offsets: None,
+                    },
+                    num_rows,
+                ),
+                InternalColumnType::BlockName => internal_column
+                    .generate_block_name_column_values(block_meta.block_location.as_str()),
+                InternalColumnType::SegmentName => internal_column
+                    .generate_segment_name_column_values(block_meta.segment_location.as_str()),
+                InternalColumnType::SnapshotName => internal_column
+                    .generate_snapshot_name_column_values(block_meta.snapshot_location.as_str()),
+            };
             columns.push(column);
         }
         data_blocks.push(DataBlock::new(columns, num_rows));

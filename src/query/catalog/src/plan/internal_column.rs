@@ -80,15 +80,21 @@ pub fn block_idx_in_segment(block_num: usize, block_id: usize) -> usize {
     block_num - (block_id + 1)
 }
 
-// meta data for generate internal columns
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum InternalColumnMeta {
+    RowId(RowIdMeta),
+    // block_location: String,
+    BlockName(String),
+    // segment_location: String,
+    SegmentName(String),
+    // snapshot_location: String,
+    SnapshotName(String),
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
-pub struct InternalColumnMeta {
+pub struct RowIdMeta {
     pub segment_idx: usize,
     pub block_id: usize,
-    pub block_location: String,
-    pub segment_location: String,
-    pub snapshot_location: String,
-    /// The row offsets in the block.
     pub offsets: Option<Vec<usize>>,
 }
 
@@ -174,59 +180,86 @@ impl InternalColumn {
         }
     }
 
-    pub fn generate_column_values(&self, meta: &InternalColumnMeta, num_rows: usize) -> BlockEntry {
-        match &self.column_type {
-            InternalColumnType::RowId => {
-                let block_id = meta.block_id as u64;
-                let seg_id = meta.segment_idx as u64;
-                let high_32bit = compute_row_id_prefix(seg_id, block_id);
-                let mut row_ids = Vec::with_capacity(num_rows);
-                if let Some(offsets) = &meta.offsets {
-                    for i in offsets {
-                        let row_id = compute_row_id(high_32bit, *i as u64);
-                        row_ids.push(row_id);
-                    }
-                } else {
-                    for i in 0..num_rows {
-                        let row_id = compute_row_id(high_32bit, i as u64);
-                        row_ids.push(row_id);
-                    }
-                }
+    pub fn generate_block_name_column_values(&self, block_location: &str) -> BlockEntry {
+        let mut builder = StringColumnBuilder::with_capacity(1, block_location.len());
+        builder.put_str(block_location);
+        builder.commit_row();
+        BlockEntry::new(
+            DataType::String,
+            Value::Scalar(Scalar::String(builder.build_scalar())),
+        )
+    }
 
-                BlockEntry::new(
-                    DataType::Number(NumberDataType::UInt64),
-                    Value::Column(UInt64Type::from_data(row_ids)),
-                )
+    pub fn generate_segment_name_column_values(&self, segment_location: &str) -> BlockEntry {
+        let mut builder = StringColumnBuilder::with_capacity(1, segment_location.len());
+        builder.put_str(segment_location);
+        builder.commit_row();
+        BlockEntry::new(
+            DataType::String,
+            Value::Scalar(Scalar::String(builder.build_scalar())),
+        )
+    }
+
+    pub fn generate_snapshot_name_column_values(&self, snapshot_location: &str) -> BlockEntry {
+        let mut builder = StringColumnBuilder::with_capacity(1, snapshot_location.len());
+        builder.put_str(snapshot_location);
+        builder.commit_row();
+        BlockEntry::new(
+            DataType::String,
+            Value::Scalar(Scalar::String(builder.build_scalar())),
+        )
+    }
+
+    pub fn generate_row_id_column_values(&self, meta: &RowIdMeta, num_rows: usize) -> BlockEntry {
+        let block_id = meta.block_id as u64;
+        let seg_id = meta.segment_idx as u64;
+        let high_32bit = compute_row_id_prefix(seg_id, block_id);
+        let mut row_ids = Vec::with_capacity(num_rows);
+        if let Some(offsets) = &meta.offsets {
+            for i in offsets {
+                let row_id = compute_row_id(high_32bit, *i as u64);
+                row_ids.push(row_id);
             }
-            InternalColumnType::BlockName => {
-                let mut builder = StringColumnBuilder::with_capacity(1, meta.block_location.len());
-                builder.put_str(&meta.block_location);
-                builder.commit_row();
-                BlockEntry::new(
-                    DataType::String,
-                    Value::Scalar(Scalar::String(builder.build_scalar())),
-                )
+        } else {
+            for i in 0..num_rows {
+                let row_id = compute_row_id(high_32bit, i as u64);
+                row_ids.push(row_id);
             }
-            InternalColumnType::SegmentName => {
-                let mut builder =
-                    StringColumnBuilder::with_capacity(1, meta.segment_location.len());
-                builder.put_str(&meta.segment_location);
-                builder.commit_row();
-                BlockEntry::new(
-                    DataType::String,
-                    Value::Scalar(Scalar::String(builder.build_scalar())),
-                )
-            }
-            InternalColumnType::SnapshotName => {
-                let mut builder =
-                    StringColumnBuilder::with_capacity(1, meta.snapshot_location.len());
-                builder.put_str(&meta.snapshot_location);
-                builder.commit_row();
-                BlockEntry::new(
-                    DataType::String,
-                    Value::Scalar(Scalar::String(builder.build_scalar())),
-                )
-            }
+        }
+
+        BlockEntry::new(
+            DataType::Number(NumberDataType::UInt64),
+            Value::Column(UInt64Type::from_data(row_ids)),
+        )
+    }
+}
+
+impl TryFrom<InternalColumnMeta> for RowIdMeta {
+    type Error = ErrorCode;
+
+    fn try_from(value: InternalColumnMeta) -> Result<Self> {
+        match value {
+            InternalColumnMeta::RowId(meta) => Ok(meta),
+            _ => Err(ErrorCode::Internal(format!(
+                "Cannot convert {:?} to RowIdMeta.",
+                value
+            ))),
+        }
+    }
+}
+
+impl TryFrom<InternalColumnMeta> for String {
+    type Error = ErrorCode;
+
+    fn try_from(value: InternalColumnMeta) -> Result<Self> {
+        match value {
+            InternalColumnMeta::BlockName(block_location) => Ok(block_location),
+            InternalColumnMeta::SegmentName(segment_location) => Ok(segment_location),
+            InternalColumnMeta::SnapshotName(snapshot_location) => Ok(snapshot_location),
+            _ => Err(ErrorCode::Internal(format!(
+                "Cannot convert {:?} to String.",
+                value
+            ))),
         }
     }
 }
