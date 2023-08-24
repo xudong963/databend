@@ -47,6 +47,7 @@ use ethnum::U256;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 
+use crate::pipelines::processors::transforms::hash_join::build_spill::BuildSpillState;
 use crate::pipelines::processors::transforms::hash_join::common::set_validity;
 use crate::pipelines::processors::transforms::hash_join::desc::MARKER_KIND_FALSE;
 use crate::pipelines::processors::transforms::hash_join::hash_join_state::FixedKeyHashJoinHashTable;
@@ -91,8 +92,8 @@ pub struct HashJoinBuildState {
     pub(crate) build_worker_num: Arc<AtomicU32>,
     /// Tasks for building hash table.
     pub(crate) build_hash_table_tasks: Arc<RwLock<VecDeque<(usize, usize)>>>,
-    /// Coordinator for build spill.
-    pub(crate) spill_coordinator: Arc<BuildSpillCoordinator>,
+    /// Spill related states
+    pub(crate) spill_state: BuildSpillState,
 }
 
 impl HashJoinBuildState {
@@ -108,6 +109,7 @@ impl HashJoinBuildState {
             .map(|expr| expr.as_expr(&BUILTIN_FUNCTIONS).data_type().clone())
             .collect::<Vec<_>>();
         let method = DataBlock::choose_hash_method_with_types(&hash_key_types, false)?;
+        let spill_state = BuildSpillState::create(ctx.clone(), spill_coordinator);
         Ok(Arc::new(Self {
             ctx: ctx.clone(),
             hash_join_state,
@@ -121,7 +123,7 @@ impl HashJoinBuildState {
             build_projections: Arc::new(build_projections.clone()),
             build_worker_num: Arc::new(Default::default()),
             build_hash_table_tasks: Arc::new(Default::default()),
-            spill_coordinator,
+            spill_state,
         }))
     }
 
@@ -207,6 +209,8 @@ impl HashJoinBuildState {
         let mut count = self.hash_join_state.hash_table_builders.lock();
         *count += 1;
         self.build_worker_num.fetch_add(1, Ordering::Relaxed);
+        let mut count = self.spill_state.spill_coordinator.total_builder_count.write();
+        *count += 1;
         Ok(())
     }
 
