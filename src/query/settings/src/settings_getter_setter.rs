@@ -232,6 +232,14 @@ impl Settings {
         self.try_set_u64("enable_cbo", u64::from(val))
     }
 
+    pub fn get_enable_join_spill(&self) -> Result<bool> {
+        Ok(self.try_get_u64("enable_join_spill")? != 0)
+    }
+
+    pub fn set_enable_join_spill(&self, val: bool) -> Result<()> {
+        self.try_set_u64("enable_join_spill", u64::from(val))
+    }
+
     pub fn get_runtime_filter(&self) -> Result<bool> {
         Ok(self.try_get_u64("enable_runtime_filter")? != 0)
     }
