@@ -270,9 +270,6 @@ impl HashJoinProbeState {
     }
 
     pub fn finish_final_probe(&self) {
-        // Reset build done to false
-        let mut build_done = self.hash_join_state.build_done.lock();
-        *build_done = false;
         let mut count = self.final_probe_workers.lock();
         *count -= 1;
         if *count == 0 {
@@ -312,9 +309,6 @@ impl HashJoinProbeState {
     }
 
     pub fn finish_spill(&self, need_p_id: bool) {
-        // Reset build done to false
-        let mut build_done = self.hash_join_state.build_done.lock();
-        *build_done = false;
         let mut count = self.final_probe_workers.lock();
         *count -= 1;
         let mut count = self.spill_workers.lock();

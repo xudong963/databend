@@ -18,7 +18,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use common_base::base::tokio::sync::Notify;
+use common_base::base::tokio::sync::{Notify, watch};
 use common_exception::Result;
 use common_expression::types::DataType;
 use common_expression::ColumnVec;
@@ -35,6 +35,7 @@ use common_sql::ColumnSet;
 use ethnum::U256;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
+use common_base::base::tokio::sync::watch::{Receiver, Sender};
 
 use crate::pipelines::processors::transforms::hash_join::row::RowSpace;
 use crate::pipelines::processors::transforms::hash_join::util::build_schema_wrap_nullable;
@@ -79,11 +80,10 @@ pub struct HashJoinState {
     /// When the counter is 0, it means all hash join build processors have added their chunks to `HashTable`.
     /// And the build phase is finished. Probe phase will start.
     pub(crate) hash_table_builders: Mutex<usize>,
-    /// After `hash_table_builders` is 0, it will be set as true.
-    /// It works with notify to make HashJoin start the probe phase.
-    pub(crate) build_done: Mutex<bool>,
-    /// Notify probe processors that build phase is finished.
-    pub(crate) build_done_notify: Arc<Notify>,
+    /// After `hash_table_builders` is 0, send message to notify all probe processor.
+    pub(crate) build_done_watcher: Sender<bool>,
+    /// A dummy receiver to make watcher channel open
+    pub(crate) _dummy_receiver: Receiver<bool>,
     /// Some description of hash join. Such as join type, join keys, etc.
     pub(crate) hash_join_desc: HashJoinDesc,
     /// Interrupt the build phase or probe phase.
@@ -137,11 +137,12 @@ impl HashJoinState {
         if hash_join_desc.join_type == JoinType::Full {
             build_schema = build_schema_wrap_nullable(&build_schema);
         }
+        let (build_done_watcher, _dummy_receiver) = watch::channel(false);
         Ok(Arc::new(HashJoinState {
             hash_table: Arc::new(SyncUnsafeCell::new(HashJoinHashTable::Null)),
             hash_table_builders: Mutex::new(0),
-            build_done: Mutex::new(false),
-            build_done_notify: Arc::new(Default::default()),
+            build_done_watcher,
+            _dummy_receiver,
             hash_join_desc,
             interrupt: Arc::new(AtomicBool::new(false)),
             fast_return: Arc::new(Default::default()),
@@ -170,16 +171,12 @@ impl HashJoinState {
     /// Used by hash join probe processors, wait for build phase finished.
     #[async_backtrace::framed]
     pub async fn wait_build_hash_table_finish(&self) -> Result<()> {
-        let notified = {
-            let finalized_guard = self.build_done.lock();
-            match *finalized_guard {
-                true => None,
-                false => Some(self.build_done_notify.notified()),
-            }
-        };
-        if let Some(notified) = notified {
-            notified.await;
+        let mut rx = self.build_done_watcher.subscribe();
+        if *rx.borrow() {
+            return Ok(());
         }
+        rx.changed().await.unwrap();
+        debug_assert!(*rx.borrow() == true);
         Ok(())
     }
 

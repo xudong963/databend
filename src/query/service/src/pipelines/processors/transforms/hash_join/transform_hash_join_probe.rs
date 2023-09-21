@@ -25,6 +25,7 @@ use common_expression::FunctionContext;
 use common_sql::optimizer::ColumnSet;
 use common_sql::plans::JoinType;
 use log::info;
+use common_base::base::tokio::sync::futures::Notified;
 
 use crate::pipelines::processors::port::InputPort;
 use crate::pipelines::processors::port::OutputPort;

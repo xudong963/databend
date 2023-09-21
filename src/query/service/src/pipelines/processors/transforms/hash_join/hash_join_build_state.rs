@@ -256,9 +256,7 @@ impl HashJoinBuildState {
                 *row_space_build_done = true;
                 self.row_space_build_done_notify.notify_waiters();
 
-                let mut build_done = self.hash_join_state.build_done.lock();
-                *build_done = true;
-                self.hash_join_state.build_done_notify.notify_waiters();
+                self.hash_join_state.build_done_watcher.send(true).unwrap();
                 return Ok(());
             }
 
@@ -635,9 +633,7 @@ impl HashJoinBuildState {
                 *build_columns_data_type = columns_data_type;
                 *build_columns = columns;
             }
-            let mut build_done = self.hash_join_state.build_done.lock();
-            *build_done = true;
-            self.hash_join_state.build_done_notify.notify_waiters();
+            self.hash_join_state.build_done_watcher.send(true).unwrap();
         }
         Ok(())
     }
