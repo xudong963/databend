@@ -18,12 +18,13 @@ use std::sync::Arc;
 
 use common_exception::ErrorCode;
 use common_exception::Result;
+use common_expression::Expr;
+use common_expression::RemoteExpr;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use minitrace::prelude::*;
 use petgraph::graph::node_index;
 use petgraph::prelude::NodeIndex;
-use common_expression::{Expr, RemoteExpr};
 
 use crate::processors::profile::Profile;
 
@@ -84,10 +85,10 @@ pub trait Processor: Send {
 
     fn record_profile(&self, _profile: &Profile) {}
 
-<<<<<<< Updated upstream
     fn details_status(&self) -> Option<String> {
         None
-=======
+    }
+
     // Get runtime filter of join.
     fn get_runtime_filter(&self) -> Result<Vec<Expr>> {
         Ok(vec![])
@@ -98,8 +99,9 @@ pub trait Processor: Send {
     }
 
     fn add_runtime_filter(&mut self, _filters: Vec<Expr>) -> Result<()> {
-        Err(ErrorCode::Unimplemented("Unimplemented add_runtime_filter."))
->>>>>>> Stashed changes
+        Err(ErrorCode::Unimplemented(
+            "Unimplemented add_runtime_filter.",
+        ))
     }
 }
 
@@ -162,7 +164,7 @@ impl ProcessorPtr {
     }
 
     /// #Safety
-    pub unsafe fn get_runtime_filter(&self) -> Result<Vec<Expr>>{
+    pub unsafe fn get_runtime_filter(&self) -> Result<Vec<Expr>> {
         (*self.inner.get()).get_runtime_filter()
     }
 
@@ -172,7 +174,7 @@ impl ProcessorPtr {
     }
 
     /// #Safety
-    pub unsafe fn add_runtime_filter(&self, filters: Vec<Expr>) -> Result<()>{
+    pub unsafe fn add_runtime_filter(&self, filters: Vec<Expr>) -> Result<()> {
         (*self.inner.get()).add_runtime_filter(filters)
     }
 
@@ -239,10 +241,10 @@ impl<T: Processor + ?Sized> Processor for Box<T> {
         (**self).async_process().await
     }
 
-<<<<<<< Updated upstream
     fn details_status(&self) -> Option<String> {
         (**self).details_status()
-=======
+    }
+
     // Get runtime filter of join.
     fn get_runtime_filter(&self) -> Result<Vec<Expr>> {
         (**self).get_runtime_filter()
@@ -254,6 +256,5 @@ impl<T: Processor + ?Sized> Processor for Box<T> {
 
     fn add_runtime_filter(&mut self, _filters: Vec<Expr>) -> Result<()> {
         (**self).add_runtime_filter(_filters)
->>>>>>> Stashed changes
     }
 }
