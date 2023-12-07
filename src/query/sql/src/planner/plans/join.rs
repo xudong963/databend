@@ -502,7 +502,13 @@ impl Operator for Join {
             // where n is the number of servers in the cluster.
             let broadcast_join_threshold = (ctx.get_cluster().nodes.len() - 1) as f64;
             if right_stat_info.cardinality * broadcast_join_threshold < left_stat_info.cardinality {
-                required.distribution = Distribution::Broadcast;
+                if child_index == 1 {
+                    // Build side
+                    required.distribution = Distribution::Broadcast;
+                } else {
+                    // Probe side
+                    required.distribution = Distribution::Any;
+                }
                 return Ok(required);
             }
         }
