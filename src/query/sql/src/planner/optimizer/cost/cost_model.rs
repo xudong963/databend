@@ -69,8 +69,8 @@ fn compute_cost_scan(memo: &Memo, m_expr: &MExpr, _plan: &Scan) -> Result<Cost> 
 }
 
 fn compute_cost_join(memo: &Memo, m_expr: &MExpr, plan: &Join) -> Result<Cost> {
-    let build_group = m_expr.child_group(memo, 1)?;
-    let probe_group = m_expr.child_group(memo, 0)?;
+    let build_group = m_expr.child_group(memo, 0)?;
+    let probe_group = m_expr.child_group(memo, 1)?;
     let build_card = build_group.stat_info.cardinality;
     let probe_card = probe_group.stat_info.cardinality;
 

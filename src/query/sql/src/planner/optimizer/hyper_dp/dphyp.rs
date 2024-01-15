@@ -252,10 +252,10 @@ impl DPhpy {
             RelOperator::Exchange(_) | RelOperator::AddRowNumber(_) | RelOperator::Pattern(_) => {
                 unreachable!()
             }
+            RelOperator::MaterializedCte(_) => Ok((s_expr, false)),
             RelOperator::DummyTableScan(_)
             | RelOperator::ConstantTableScan(_)
-            | RelOperator::CteScan(_)
-            | RelOperator::MaterializedCte(_) => Ok((s_expr, true)),
+            | RelOperator::CteScan(_) => Ok((s_expr, true)),
         }
     }
 

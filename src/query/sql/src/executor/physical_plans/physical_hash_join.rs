@@ -90,8 +90,8 @@ impl PhysicalPlanBuilder {
         column_projections: Vec<IndexType>,
         stat_info: PlanStatsInfo,
     ) -> Result<PhysicalPlan> {
-        let mut probe_side = Box::new(self.build(s_expr.child(0)?, required.0).await?);
-        let mut build_side = Box::new(self.build(s_expr.child(1)?, required.1).await?);
+        let mut probe_side = Box::new(self.build(s_expr.child(1)?, required.1).await?);
+        let mut build_side = Box::new(self.build(s_expr.child(0)?, required.0).await?);
         // Unify the data types of the left and right exchange keys.
         if let (
             PhysicalPlan::Exchange(Exchange {
@@ -174,7 +174,7 @@ impl PhysicalPlanBuilder {
         assert_eq!(join.left_conditions.len(), join.right_conditions.len());
         let mut left_join_conditions = Vec::new();
         let mut right_join_conditions = Vec::new();
-        let mut left_join_conditions_rt = Vec::new();
+        let mut right_join_conditions_rt = Vec::new();
         let mut probe_to_build_index = Vec::new();
         for (left_condition, right_condition) in join
             .left_conditions
@@ -182,13 +182,13 @@ impl PhysicalPlanBuilder {
             .zip(join.right_conditions.iter())
         {
             let right_expr = right_condition
-                .type_check(build_schema.as_ref())?
-                .project_column_ref(|index| build_schema.index_of(&index.to_string()).unwrap());
-            let left_expr = left_condition
                 .type_check(probe_schema.as_ref())?
                 .project_column_ref(|index| probe_schema.index_of(&index.to_string()).unwrap());
+            let left_expr = left_condition
+                .type_check(build_schema.as_ref())?
+                .project_column_ref(|index| build_schema.index_of(&index.to_string()).unwrap());
 
-            let left_expr_for_runtime_filter = left_condition
+            let right_expr_for_runtime_filter = right_condition
                 .as_raw_expr()
                 .type_check(&*self.metadata.read())?
                 .project_column_ref(|col| col.column_name.clone());
@@ -199,8 +199,8 @@ impl PhysicalPlanBuilder {
                 {
                     if column_projections.contains(&right.column.index) {
                         if let (Ok(probe_index), Ok(build_index)) = (
-                            probe_schema.index_of(&left.column.index.to_string()),
-                            build_schema.index_of(&right.column.index.to_string()),
+                            probe_schema.index_of(&right.column.index.to_string()),
+                            build_schema.index_of(&left.column.index.to_string()),
                         ) {
                             if probe_schema
                                 .field(probe_index)
@@ -249,10 +249,10 @@ impl PhysicalPlanBuilder {
                 &BUILTIN_FUNCTIONS,
             )?;
 
-            let left_expr_for_runtime_filter = check_cast(
-                left_expr_for_runtime_filter.span(),
+            let right_expr_for_runtime_filter = check_cast(
+                right_expr_for_runtime_filter.span(),
                 false,
-                left_expr_for_runtime_filter,
+                right_expr_for_runtime_filter,
                 &common_ty,
                 &BUILTIN_FUNCTIONS,
             )?;
@@ -262,15 +262,15 @@ impl PhysicalPlanBuilder {
             let (right_expr, _) =
                 ConstantFolder::fold(&right_expr, &self.func_ctx, &BUILTIN_FUNCTIONS);
 
-            let (left_expr_for_runtime_filter, _) = ConstantFolder::fold(
-                &left_expr_for_runtime_filter,
+            let (right_expr_for_runtime_filter, _) = ConstantFolder::fold(
+                &right_expr_for_runtime_filter,
                 &self.func_ctx,
                 &BUILTIN_FUNCTIONS,
             );
 
             left_join_conditions.push(left_expr.as_remote_expr());
             right_join_conditions.push(right_expr.as_remote_expr());
-            left_join_conditions_rt.push(left_expr_for_runtime_filter.as_remote_expr());
+            right_join_conditions_rt.push(right_expr_for_runtime_filter.as_remote_expr());
         }
 
         let mut probe_projections = ColumnSet::new();
@@ -343,16 +343,16 @@ impl PhysicalPlanBuilder {
             | JoinType::Right
             | JoinType::RightSingle
             | JoinType::Full => {
-                probe_fields.extend(build_fields);
-                probe_fields
+                build_fields.extend(probe_fields);
+                build_fields
             }
             JoinType::LeftSemi | JoinType::LeftAnti | JoinType::RightSemi | JoinType::RightAnti => {
                 let (result_fields, dropped_fields) = if join.join_type == JoinType::LeftSemi
                     || join.join_type == JoinType::LeftAnti
                 {
-                    (probe_fields, build_fields)
-                } else {
                     (build_fields, probe_fields)
+                } else {
+                    (probe_fields, build_fields)
                 };
                 for field in dropped_fields.iter() {
                     if result_fields.iter().all(|x| x.name() != field.name()) &&
@@ -380,11 +380,11 @@ impl PhysicalPlanBuilder {
                 } else {
                     "marker".to_string()
                 };
-                build_fields.push(DataField::new(
+                probe_fields.push(DataField::new(
                     name.as_str(),
                     DataType::Nullable(Box::new(DataType::Boolean)),
                 ));
-                build_fields
+                probe_fields
             }
             JoinType::RightMark => {
                 let name = if let Some(idx) = join.marker_index {
@@ -392,11 +392,11 @@ impl PhysicalPlanBuilder {
                 } else {
                     "marker".to_string()
                 };
-                probe_fields.push(DataField::new(
+                build_fields.push(DataField::new(
                     name.as_str(),
                     DataType::Nullable(Box::new(DataType::Boolean)),
                 ));
-                probe_fields
+                build_fields
             }
         };
         let mut projections = ColumnSet::new();
@@ -429,9 +429,9 @@ impl PhysicalPlanBuilder {
             build: build_side,
             probe: probe_side,
             join_type: join.join_type.clone(),
-            build_keys: right_join_conditions,
-            probe_keys: left_join_conditions,
-            probe_keys_rt: left_join_conditions_rt,
+            build_keys: left_join_conditions,
+            probe_keys: right_join_conditions,
+            probe_keys_rt: right_join_conditions_rt,
             non_equi_conditions: join
                 .non_equi_conditions
                 .iter()
