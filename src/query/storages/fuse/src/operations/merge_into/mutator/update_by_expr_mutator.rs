@@ -39,7 +39,6 @@ pub struct UpdateByExprMutator {
     expr: Option<Expr>,
     func_ctx: FunctionContext,
     field_index_of_input_schema: HashMap<FieldIndex, usize>,
-    origin_input_columns: usize,
 
     update_lists: Vec<(FieldIndex, RemoteExpr)>,
 }
@@ -51,18 +50,16 @@ impl UpdateByExprMutator {
         func_ctx: FunctionContext,
         field_index_of_input_schema: HashMap<FieldIndex, usize>,
         update_lists: Vec<(FieldIndex, RemoteExpr)>,
-        origin_input_columns: usize,
     ) -> Self {
         Self {
             expr,
             func_ctx,
             field_index_of_input_schema,
-            origin_input_columns,
             update_lists,
         }
     }
 
-    pub fn update_by_expr(&self, data_block: DataBlock) -> Result<DataBlock> {
+    pub fn update_by_expr(&self, data_block: DataBlock, first_round: bool) -> Result<DataBlock> {
         let const_expr = Expr::Constant {
             span: None,
             scalar: databend_common_expression::Scalar::Boolean(true),
@@ -76,7 +73,7 @@ impl UpdateByExprMutator {
         expr = cast_expr_to_non_null_boolean(expr)?;
 
         // it's the first update, after update, we need to add a filter column
-        if data_block.num_columns() == self.origin_input_columns {
+        if first_round {
             assert_eq!(expr.data_type(), &DataType::Boolean);
             self.update_block(data_block, expr, false)
         } else {
@@ -147,8 +144,8 @@ impl UpdateByExprMutator {
         let op = BlockOperator::Map {
             exprs,
             projections: Some(
-                (self.origin_input_columns
-                    ..self.origin_input_columns + 1 + self.update_lists.len())
+                (self.field_index_of_input_schema.len()
+                    ..self.field_index_of_input_schema.len() + 1 + self.update_lists.len())
                     .collect(),
             ),
         };

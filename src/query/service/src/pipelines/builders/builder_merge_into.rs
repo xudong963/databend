@@ -39,6 +39,7 @@ use databend_common_sql::executor::physical_plans::MergeInto;
 use databend_common_sql::executor::physical_plans::MergeIntoAddRowNumber;
 use databend_common_sql::executor::physical_plans::MergeIntoAppendNotMatched;
 use databend_common_sql::executor::physical_plans::MutationKind;
+use databend_common_sql::plans::ExecutionMode;
 use databend_common_storages_fuse::operations::MatchedSplitProcessor;
 use databend_common_storages_fuse::operations::MergeIntoNotMatchedProcessor;
 use databend_common_storages_fuse::operations::MergeIntoSplitProcessor;
@@ -363,7 +364,7 @@ impl PipelineBuilder {
             field_index_of_input_schema,
             row_id_idx,
             segments,
-            distributed,
+            execution_mode,
             merge_type,
             change_join_order,
             can_try_update_column_only,
@@ -461,7 +462,7 @@ impl PipelineBuilder {
 
             if need_unmatch {
                 // If merge into doesn't contain right broadcast join, execute insert in local.
-                if !*distributed || *change_join_order {
+                if !matches!(execution_mode, ExecutionMode::RightJoinBroadcast) {
                     let merge_into_not_matched_processor = MergeIntoNotMatchedProcessor::create(
                         unmatched.clone(),
                         input.output_schema()?,
@@ -512,7 +513,7 @@ impl PipelineBuilder {
         // 1.for matched only, there are no not matched ports
         // 2.for unmatched only/insert only, there are no matched update ports and row_id ports
         let mut ranges = Vec::with_capacity(self.main_pipeline.output_len());
-        if !*distributed {
+        if matches!(execution_mode, ExecutionMode::SingleNode) {
             // complete pipeline
             if need_match && need_unmatch {
                 assert_eq!(self.main_pipeline.output_len() % 3, 0);
@@ -605,7 +606,7 @@ impl PipelineBuilder {
             }
         }
 
-        let fill_default_len = if !*distributed {
+        let fill_default_len = if matches!(execution_mode, ExecutionMode::SingleNode) {
             if need_match {
                 // remove first row_id port
                 self.main_pipeline.output_len() - 1
@@ -650,26 +651,27 @@ impl PipelineBuilder {
             fill_default_len,
         )?;
 
-        let add_builder_pipe = |mut builder: TransformPipeBuilder, distributed: &bool| -> Pipe {
-            if !*distributed {
-                if need_match {
-                    builder.add_items_prepend(vec![create_dummy_item()]);
+        let add_builder_pipe =
+            |mut builder: TransformPipeBuilder, execution_mode: &ExecutionMode| -> Pipe {
+                if matches!(execution_mode, ExecutionMode::SingleNode) {
+                    if need_match {
+                        builder.add_items_prepend(vec![create_dummy_item()]);
+                    }
+                } else {
+                    if need_match {
+                        // receive row_id
+                        builder.add_items_prepend(vec![create_dummy_item()]);
+                    }
+                    if need_unmatch && !*change_join_order {
+                        // receive row_number
+                        builder.add_items(vec![create_dummy_item()]);
+                    }
                 }
-            } else {
-                if need_match {
-                    // receive row_id
-                    builder.add_items_prepend(vec![create_dummy_item()]);
-                }
-                if need_unmatch && !*change_join_order {
-                    // receive row_number
-                    builder.add_items(vec![create_dummy_item()]);
-                }
-            }
-            builder.finalize()
-        };
+                builder.finalize()
+            };
 
         self.main_pipeline
-            .add_pipe(add_builder_pipe(builder, distributed));
+            .add_pipe(add_builder_pipe(builder, execution_mode));
         // fill computed columns
         let table_computed_schema = &table.schema_with_stream().remove_virtual_computed_fields();
         let default_schema: DataSchemaRef = Arc::new(table_default_schema.into());
@@ -688,7 +690,7 @@ impl PipelineBuilder {
                 fill_default_len,
             )?;
             self.main_pipeline
-                .add_pipe(add_builder_pipe(builder, distributed));
+                .add_pipe(add_builder_pipe(builder, execution_mode));
         }
 
         let max_threads = self.settings.get_max_threads()?;
@@ -696,7 +698,7 @@ impl PipelineBuilder {
 
         // after filling default columns, we need to add cluster‘s blocksort if it's a cluster table
         let output_lens = self.main_pipeline.output_len();
-        let serialize_len = if !*distributed {
+        let serialize_len = if matches!(execution_mode, ExecutionMode::SingleNode) {
             let mid_len = if need_match {
                 // with row_id
                 output_lens - 1
@@ -721,10 +723,6 @@ impl PipelineBuilder {
                 builder.add_items_prepend(vec![create_dummy_item()]);
             }
 
-            // need to receive row_number, we should give a dummy item here.
-            if *distributed && need_unmatch && !*change_join_order {
-                builder.add_items(vec![create_dummy_item()]);
-            }
             self.main_pipeline.add_pipe(builder.finalize());
 
             table.cluster_gen_for_append_with_specified_len(
@@ -774,7 +772,7 @@ impl PipelineBuilder {
             }
 
             // need to receive row_number, we should give a dummy item here.
-            if *distributed && need_unmatch && !*change_join_order {
+            if matches!(execution_mode, ExecutionMode::RightJoinBroadcast) && need_unmatch {
                 builder.add_items(vec![create_dummy_item()]);
             }
             self.main_pipeline.add_pipe(builder.finalize());
@@ -792,7 +790,7 @@ impl PipelineBuilder {
 
         if need_match {
             // rowid should be accumulated in main node.
-            if *change_join_order && *distributed {
+            if matches!(execution_mode, ExecutionMode::OtherDistributed) {
                 pipe_items.push(create_dummy_item())
             } else {
                 pipe_items.push(table.rowid_aggregate_mutator(
@@ -818,7 +816,7 @@ impl PipelineBuilder {
         }
 
         // receive row_number
-        if *distributed && need_unmatch && !*change_join_order {
+        if matches!(execution_mode, ExecutionMode::RightJoinBroadcast) && need_unmatch {
             pipe_items.push(create_dummy_item());
         }
 
@@ -854,13 +852,13 @@ impl PipelineBuilder {
         }
 
         // with row_number
-        if *distributed && need_unmatch && !change_join_order {
+        if matches!(execution_mode, ExecutionMode::RightJoinBroadcast) && need_unmatch {
             ranges.push(vec![self.main_pipeline.output_len() - 1]);
         }
 
         self.main_pipeline.resize_partial_one(ranges)?;
 
-        let pipe_items = if !distributed {
+        let pipe_items = if matches!(execution_mode, ExecutionMode::SingleNode) {
             let mut vec = Vec::with_capacity(2);
             if need_match {
                 vec.push(create_dummy_item());
@@ -912,7 +910,7 @@ impl PipelineBuilder {
         ));
 
         // accumulate row_number
-        if *distributed && need_unmatch && !*change_join_order {
+        if matches!(execution_mode, ExecutionMode::RightJoinBroadcast) && need_unmatch {
             let pipe_items = if need_match {
                 vec![
                     create_dummy_item(),
@@ -932,7 +930,7 @@ impl PipelineBuilder {
 
         // add distributed_merge_into_block_serialize
         // we will wrap rowid and log as MixRowIdKindAndLog
-        if *distributed && *change_join_order {
+        if matches!(execution_mode, ExecutionMode::OtherDistributed) {
             self.main_pipeline
                 .add_transform(|transform_input_port, transform_output_port| {
                     Ok(TransformDistributedMergeIntoBlockSerialize::create(

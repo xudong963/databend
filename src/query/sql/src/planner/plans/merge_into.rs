@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt::Display;
 
 use databend_common_ast::ast::TableAlias;
 use databend_common_exception::ErrorCode;
@@ -49,6 +50,32 @@ pub struct MatchedEvaluator {
     pub update: Option<HashMap<FieldIndex, ScalarExpr>>,
 }
 
+// The join of `merge into`'s execution mode.
+#[derive(Clone, Debug)]
+pub enum ExecutionMode {
+    SingleNode,
+    // This mode is singled out because it requires special handling during runtime.
+    // Right (anti) join
+    RightJoinBroadcast,
+    OtherDistributed,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        ExecutionMode::SingleNode
+    }
+}
+
+impl Display for ExecutionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecutionMode::SingleNode => write!(f, "SingleNode"),
+            ExecutionMode::RightJoinBroadcast => write!(f, "RightJoinBroadcast"),
+            ExecutionMode::OtherDistributed => write!(f, "OtherDistributed"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct MergeInto {
     pub catalog: String,
@@ -65,8 +92,7 @@ pub struct MergeInto {
     pub target_table_idx: usize,
     pub field_index_map: HashMap<FieldIndex, String>,
     pub merge_type: MergeIntoType,
-    pub distributed: bool,
-    pub change_join_order: bool,
+    pub execution_mode: ExecutionMode,
     // when we use target table as build side or insert only, we will remove rowid columns.
     pub row_id_index: IndexType,
     pub split_idx: IndexType,
@@ -88,7 +114,7 @@ impl std::fmt::Debug for MergeInto {
             .field("join", &self.input)
             .field("matched", &self.matched_evaluators)
             .field("unmatched", &self.unmatched_evaluators)
-            .field("distributed", &self.distributed)
+            .field("execution mode", &self.execution_mode)
             .field(
                 "can_try_update_column_only",
                 &self.can_try_update_column_only,

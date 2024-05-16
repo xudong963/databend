@@ -465,7 +465,7 @@ impl PhysicalPlan {
             PhysicalPlan::MaterializedCte(plan) => plan.output_schema(),
             PhysicalPlan::ConstantTableScan(plan) => plan.output_schema(),
             PhysicalPlan::Udf(plan) => plan.output_schema(),
-            PhysicalPlan::MergeInto(plan) => Ok(plan.output_schema.clone()),
+            PhysicalPlan::MergeInto(plan) => plan.output_schema(),
             PhysicalPlan::MergeIntoAddRowNumber(plan) => plan.output_schema(),
             PhysicalPlan::ReplaceAsyncSourcer(_)
             | PhysicalPlan::ReplaceDeduplicate(_)

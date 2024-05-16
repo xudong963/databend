@@ -31,31 +31,27 @@ pub struct DeleteByExprMutator {
     expr: Option<Expr>,
     row_id_idx: usize,
     func_ctx: FunctionContext,
-    origin_input_columns: usize,
     // if use target_build_optimization, we don't need to give row ids to `matched mutator`
     target_build_optimization: bool,
 }
 
 impl DeleteByExprMutator {
-    pub fn create(
-        expr: Option<Expr>,
-        func_ctx: FunctionContext,
-        row_id_idx: usize,
-        origin_input_columns: usize,
-        target_build_optimization: bool,
-    ) -> Self {
+    pub fn create(expr: Option<Expr>, func_ctx: FunctionContext, row_id_idx: usize) -> Self {
         Self {
             expr,
             row_id_idx,
             func_ctx,
-            origin_input_columns,
-            target_build_optimization,
+            target_build_optimization: false,
         }
     }
 
-    pub fn delete_by_expr(&self, data_block: DataBlock) -> Result<(DataBlock, DataBlock)> {
+    pub fn delete_by_expr(
+        &self,
+        data_block: DataBlock,
+        first_round: bool,
+    ) -> Result<(DataBlock, DataBlock)> {
         // it's the first delete, after delete, we need to add a filter column
-        if data_block.num_columns() == self.origin_input_columns {
+        if first_round {
             self.delete_block(data_block, false)
         } else {
             self.delete_block(data_block, true)
@@ -66,7 +62,7 @@ impl DeleteByExprMutator {
         &self,
         data_block: &DataBlock,
     ) -> Result<(Value<BooleanType>, Value<BooleanType>)> {
-        // filter rows that's is not processed
+        // filter rows that is not processed
         let filter_entry = data_block.get_by_offset(data_block.num_columns() - 1);
         let old_filter: Value<BooleanType> = filter_entry.value.try_downcast().unwrap();
         // false means this row is not processed, so use `not` to reverse it.

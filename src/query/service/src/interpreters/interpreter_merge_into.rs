@@ -44,6 +44,7 @@ use databend_common_sql::executor::physical_plans::MutationKind;
 use databend_common_sql::executor::PhysicalPlan;
 use databend_common_sql::executor::PhysicalPlanBuilder;
 use databend_common_sql::plans;
+use databend_common_sql::plans::ExecutionMode;
 use databend_common_sql::plans::MergeInto as MergePlan;
 use databend_common_sql::plans::RelOperator;
 use databend_common_sql::IndexType;
@@ -140,8 +141,7 @@ impl MergeIntoInterpreter {
             target_table_idx,
             field_index_map,
             merge_type,
-            distributed,
-            change_join_order,
+            execution_mode,
             split_idx,
             row_id_index,
             can_try_update_column_only,
@@ -157,27 +157,8 @@ impl MergeIntoInterpreter {
             ))
         })?;
 
-        // attentation!! for now we have some strategies:
         // 1. target_build_optimization, this is enabled in standalone mode and in this case we don't need rowid column anymore.
         // but we just support for `merge into xx using source on xxx when matched then update xxx when not matched then insert xxx`.
-        // 2. merge into join strategies:
-        // Left,Right,Inner,Left Anti, Right Anti
-        // important flag:
-        //      I. change join order: if true, target table as build side, if false, source as build side.
-        //      II. distributed: this merge into is executed at a distributed stargety.
-        // 2.1 Left: there are matched and not matched, and change join order is true.
-        // 2.2 Left Anti: change join order is true, but it's insert-only.
-        // 2.3 Inner: this is matched only case.
-        //      2.3.1 change join order is true, target table as build side,it's matched-only.
-        //      2.3.2 change join order is false, source data as build side,it's matched-only.
-        // 2.4 Right: change join order is false, there are matched and not matched
-        // 2.5 Right Anti: change join order is false, but it's insert-only.
-        // distributed execution stargeties:
-        // I. change join order is true, we use the `optimize_distributed_query`'s result.
-        // II. change join order is false and match_pattern and not enable spill, we use right outer join with rownumber distributed strategies.
-        // III otherwise, use `merge_into_join_sexpr` as standalone execution(so if change join order is false,but doesn't match_pattern, we don't support distributed,in fact. case I
-        // can take this at most time, if that's a hash shuffle, the I can take it. We think source is always very small).
-
         // for `target_build_optimization` we don't need to read rowId column. for now, there are two cases we don't read rowid:
         // I. InsertOnly, the MergeIntoType is InsertOnly
         // II. target build optimization for this pr. the MergeIntoType is MergeIntoType
@@ -185,7 +166,6 @@ impl MergeIntoInterpreter {
             matches!(self.plan.merge_type, MergeIntoType::FullOperation)
                 && !self.plan.columns_set.contains(&self.plan.row_id_index);
         if target_build_optimization {
-            assert!(*change_join_order && !*distributed);
             // so if `target_build_optimization` is true, it means the optimizer enable this rule.
             // but we need to check if it's parquet format or native format. for now,we just support
             // parquet. (we will support native in the next pr).
@@ -210,14 +190,6 @@ impl MergeIntoInterpreter {
 
         let table_name = table_name.clone();
         let input = input.clone();
-
-        // we need to extract join plan, but we need to give this exchange
-        // back at last.
-        let (input, extract_exchange) = if let RelOperator::Exchange(_) = input.plan() {
-            (Box::new(input.child(0)?.clone()), true)
-        } else {
-            (input, false)
-        };
 
         let mut builder = PhysicalPlanBuilder::new(meta_data.clone(), self.ctx.clone(), false);
         let mut join_input = builder.build(&input, *columns_set.clone()).await?;
@@ -265,7 +237,7 @@ impl MergeIntoInterpreter {
             }
         }
 
-        if *distributed && !*change_join_order {
+        if matches!(execution_mode, ExecutionMode::RightJoinBroadcast) {
             row_number_idx = Some(join_output_schema.index_of(ROW_NUMBER_COL_NAME)?);
         }
 
@@ -276,25 +248,8 @@ impl MergeIntoInterpreter {
             ));
         }
 
-        if *distributed && row_number_idx.is_none() && !*change_join_order {
-            return Err(ErrorCode::InvalidRowIdIndex(
-                "can't get internal row_number_idx when running merge into",
-            ));
-        }
-
         let table_info = fuse_table.get_table_info().clone();
         let catalog_ = self.ctx.get_catalog(catalog).await?;
-
-        if !*distributed && extract_exchange {
-            join_input = PhysicalPlan::Exchange(Exchange {
-                plan_id: 0,
-                input: Box::new(join_input),
-                kind: FragmentKind::Merge,
-                keys: vec![],
-                allow_adjust_parallelism: true,
-                ignore_exchange: false,
-            });
-        };
 
         // transform unmatched for insert
         // reference to func `build_eval_scalar`
@@ -414,80 +369,42 @@ impl MergeIntoInterpreter {
             .enumerate()
             .collect();
 
-        let commit_input = if !distributed {
-            PhysicalPlan::MergeInto(Box::new(MergeInto {
-                input: Box::new(join_input.clone()),
-                table_info: table_info.clone(),
-                catalog_info: catalog_.info(),
-                unmatched,
-                matched,
-                field_index_of_input_schema,
-                row_id_idx,
-                segments,
-                distributed: false,
-                output_schema: DataSchemaRef::default(),
-                merge_type: merge_type.clone(),
-                change_join_order: *change_join_order,
-                target_build_optimization,
-                can_try_update_column_only: *can_try_update_column_only,
-                plan_id: u32::MAX,
-                merge_into_split_idx,
-            }))
-        } else {
-            let merge_append = PhysicalPlan::MergeInto(Box::new(MergeInto {
-                input: Box::new(join_input.clone()),
-                table_info: table_info.clone(),
-                catalog_info: catalog_.info(),
-                unmatched: unmatched.clone(),
-                matched,
-                field_index_of_input_schema,
-                row_id_idx,
-                segments: segments.clone(),
-                distributed: true,
-                output_schema: match *change_join_order {
-                    false => DataSchemaRef::new(DataSchema::new(vec![
-                        join_output_schema.fields[row_number_idx.unwrap()].clone(),
-                    ])),
-                    true => DataSchemaRef::new(DataSchema::new(vec![DataField::new(
-                        ROW_ID_COL_NAME,
-                        databend_common_expression::types::DataType::Number(
-                            databend_common_expression::types::NumberDataType::UInt64,
-                        ),
-                    )])),
-                },
-                merge_type: merge_type.clone(),
-                change_join_order: *change_join_order,
-                target_build_optimization: false, // we don't support for distributed mode for now..
-                can_try_update_column_only: *can_try_update_column_only,
-                plan_id: u32::MAX,
-                merge_into_split_idx,
-            }));
-            // if change_join_order = true, it means the target is build side,
-            // in this way, we will do matched operation and not matched operation
-            // locally in every node, and the main node just receive rowids to apply.
-            let segments = if *change_join_order {
-                segments.clone()
-            } else {
-                vec![]
-            };
-            PhysicalPlan::MergeIntoAppendNotMatched(Box::new(MergeIntoAppendNotMatched {
-                input: Box::new(PhysicalPlan::Exchange(Exchange {
-                    plan_id: 0,
-                    input: Box::new(merge_append),
-                    kind: FragmentKind::Merge,
-                    keys: vec![],
-                    allow_adjust_parallelism: true,
-                    ignore_exchange: false,
-                })),
-                table_info: table_info.clone(),
-                catalog_info: catalog_.info(),
-                unmatched: unmatched.clone(),
-                input_schema: join_input.output_schema()?,
-                merge_type: merge_type.clone(),
-                change_join_order: *change_join_order,
-                segments,
-                plan_id: u32::MAX,
-            }))
+        let mut commit_input = PhysicalPlan::MergeInto(Box::new(MergeInto {
+            input: Box::new(join_input.clone()),
+            table_info: table_info.clone(),
+            catalog_info: catalog_.info(),
+            unmatched,
+            matched,
+            field_index_of_input_schema,
+            row_id_idx,
+            segments: segments.clone(),
+            execution_mode,
+            merge_type: merge_type.clone(),
+            target_build_optimization,
+            can_try_update_column_only: *can_try_update_column_only,
+            plan_id: u32::MAX,
+            merge_into_split_idx,
+        }));
+
+        if !matches!(execution_mode, ExecutionMode::SingleNode) {
+            commit_input =
+                PhysicalPlan::MergeIntoAppendNotMatched(Box::new(MergeIntoAppendNotMatched {
+                    input: Box::new(PhysicalPlan::Exchange(Exchange {
+                        plan_id: 0,
+                        input: Box::new(commit_input),
+                        kind: FragmentKind::Merge,
+                        keys: vec![],
+                        allow_adjust_parallelism: true,
+                        ignore_exchange: false,
+                    })),
+                    table_info: table_info.clone(),
+                    catalog_info: catalog_.info(),
+                    unmatched: unmatched.clone(),
+                    input_schema: join_input.output_schema()?,
+                    merge_type: merge_type.clone(),
+                    segments,
+                    plan_id: u32::MAX,
+                }))
         };
 
         // build mutation_aggregate
@@ -496,7 +413,7 @@ impl MergeIntoInterpreter {
             snapshot: base_snapshot,
             table_info: table_info.clone(),
             catalog_info: catalog_.info(),
-            // let's use update first, we will do some optimizeations and select exact strategy
+            // let's use update first, we will do some optimizations and select exact strategy
             mutation_kind: MutationKind::Update,
             update_stream_meta: update_stream_meta.clone(),
             merge_meta: false,

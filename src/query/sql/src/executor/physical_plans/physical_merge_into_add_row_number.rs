@@ -22,6 +22,7 @@ use databend_common_expression::types::NumberDataType;
 use databend_common_expression::DataField;
 use databend_common_expression::DataSchema;
 use databend_common_expression::DataSchemaRef;
+use databend_common_expression::DataSchemaRefExt;
 use databend_common_expression::ROW_NUMBER_COL_NAME;
 
 use crate::executor::PhysicalPlan;
@@ -35,12 +36,17 @@ pub struct MergeIntoAddRowNumber {
     pub plan_id: u32,
     pub cluster_index: BTreeMap<String, usize>,
     pub input: Box<PhysicalPlan>,
-    pub output_schema: DataSchemaRef,
 }
 
 impl MergeIntoAddRowNumber {
     pub fn output_schema(&self) -> Result<DataSchemaRef> {
-        Ok(self.output_schema.clone())
+        let input_schema = self.input.output_schema()?;
+        let mut fields = input_schema.fields.clone();
+        fields.push(DataField::new(
+            ROW_NUMBER_COL_NAME,
+            DataType::Number(NumberDataType::UInt64),
+        ));
+        Ok(DataSchemaRefExt::create(fields))
     }
 }
 
@@ -60,20 +66,12 @@ impl PhysicalPlanBuilder {
         for (id, node) in self.ctx.get_cluster().nodes.iter().enumerate() {
             cluster_index.insert(node.id.clone(), id);
         }
-        let input_schema = input_plan.output_schema()?;
-        let mut fields = input_schema.fields.clone();
-        fields.push(DataField::new(
-            ROW_NUMBER_COL_NAME,
-            DataType::Number(NumberDataType::UInt64),
-        ));
-        let meta = input_schema.meta().clone();
 
         Ok(PhysicalPlan::MergeIntoAddRowNumber(Box::new(
             MergeIntoAddRowNumber {
                 plan_id: u32::MAX,
                 cluster_index,
                 input: Box::new(input_plan),
-                output_schema: Arc::new(DataSchema::new_from(fields, meta)),
             },
         )))
     }

@@ -44,7 +44,9 @@ use crate::optimizer::RuleID;
 use crate::optimizer::SExpr;
 use crate::optimizer::DEFAULT_REWRITE_RULES;
 use crate::plans::CopyIntoLocationPlan;
+use crate::plans::ExecutionMode;
 use crate::plans::Join;
+use crate::plans::JoinType;
 use crate::plans::MergeInto;
 use crate::plans::Plan;
 use crate::plans::RelOperator;
@@ -369,17 +371,12 @@ async fn optimize_merge_into(mut opt_ctx: OptimizerContext, plan: Box<MergeInto>
     if opt_ctx.enable_distributed_optimization {
         opt_ctx = opt_ctx.with_enable_distributed_optimization(enable_distributed_merge_into);
     }
-    let join_op = Join::try_from(plan.input.plan().clone())?;
     let mut join_s_expr = optimize_query(opt_ctx.clone(), *plan.input.clone()).await?;
     if let &RelOperator::Exchange(_) = join_s_expr.plan() {
         join_s_expr = join_s_expr.child(0)?.clone();
     }
-    let left_conditions = Join::try_from(join_s_expr.plan().clone())?.left_conditions;
-    let mut change_join_order = false;
-    if join_op.left_conditions != left_conditions {
-        change_join_order = true;
-    }
-    let non_equal_join = join_op.right_conditions.is_empty() && join_op.left_conditions.is_empty();
+    let join = Join::try_from(join_s_expr.plan())?;
+    let non_equal_join = join.right_conditions.is_empty() && join.left_conditions.is_empty();
 
     // we just support left join to use MergeIntoBlockInfoHashTable, we
     // don't support spill for now, and we need the matched clauses' count
@@ -393,8 +390,7 @@ async fn optimize_merge_into(mut opt_ctx: OptimizerContext, plan: Box<MergeInto>
             .get_settings()
             .get_enable_distributed_merge_into()?;
     let mut new_columns_set = plan.columns_set.clone();
-    if change_join_order
-        && matches!(plan.merge_type, MergeIntoType::FullOperation)
+    if matches!(join.join_type, JoinType::Left)
         && opt_ctx
             .table_ctx
             .get_settings()
@@ -412,28 +408,26 @@ async fn optimize_merge_into(mut opt_ctx: OptimizerContext, plan: Box<MergeInto>
 
     if opt_ctx.enable_distributed_optimization {
         let merge_source_optimizer = MergeSourceOptimizer::create();
-        let mut distributed = false;
-        if !change_join_order
+        let mut execution_mode = ExecutionMode::OtherDistributed;
+        if matches!(join.join_type, JoinType::Right | JoinType::RightAnti)
             && merge_source_optimizer
                 .merge_source_matcher
                 .matches(&join_s_expr)
             && !non_equal_join
         {
             join_s_expr = merge_source_optimizer.optimize(&join_s_expr)?;
-            distributed = true;
+            execution_mode = ExecutionMode::RightJoinBroadcast;
         };
 
         Ok(Plan::MergeInto(Box::new(MergeInto {
             input: Box::new(join_s_expr),
-            distributed,
-            change_join_order,
+            execution_mode,
             columns_set: new_columns_set.clone(),
             ..*plan
         })))
     } else {
         Ok(Plan::MergeInto(Box::new(MergeInto {
             input: Box::new(join_s_expr),
-            change_join_order,
             columns_set: new_columns_set,
             ..*plan
         })))

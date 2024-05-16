@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 
+use databend_common_exception::Result;
 use databend_common_expression::DataSchemaRef;
 use databend_common_expression::FieldIndex;
 use databend_common_expression::RemoteExpr;
@@ -23,6 +24,7 @@ use databend_storages_common_table_meta::meta::Location;
 
 use crate::binder::MergeIntoType;
 use crate::executor::physical_plan::PhysicalPlan;
+use crate::plans::ExecutionMode;
 
 pub type MatchExpr = Vec<(Option<RemoteExpr>, Option<Vec<(FieldIndex, RemoteExpr)>>)>;
 
@@ -41,13 +43,17 @@ pub struct MergeInto {
     pub field_index_of_input_schema: HashMap<FieldIndex, usize>,
     pub row_id_idx: usize,
     pub segments: Vec<(usize, Location)>,
-    pub output_schema: DataSchemaRef,
-    pub distributed: bool,
+    pub execution_mode: ExecutionMode,
     pub merge_type: MergeIntoType,
-    pub change_join_order: bool,
     pub target_build_optimization: bool,
     pub can_try_update_column_only: bool,
     pub merge_into_split_idx: Option<usize>,
+}
+
+impl MergeInto {
+    pub fn output_schema(&self) -> Result<DataSchemaRef> {
+        todo!()
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -60,6 +66,5 @@ pub struct MergeIntoAppendNotMatched {
     pub unmatched: Vec<(DataSchemaRef, Option<RemoteExpr>, Vec<RemoteExpr>)>,
     pub input_schema: DataSchemaRef,
     pub merge_type: MergeIntoType,
-    pub change_join_order: bool,
     pub segments: Vec<(usize, Location)>,
 }
