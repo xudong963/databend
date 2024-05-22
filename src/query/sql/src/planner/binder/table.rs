@@ -22,7 +22,7 @@ use async_recursion::async_recursion;
 use chrono::TimeZone;
 use chrono::Utc;
 use dashmap::DashMap;
-use databend_common_ast::ast::Connection;
+use databend_common_ast::ast::{Connection, SetExpr, SetOperator};
 use databend_common_ast::ast::Expr;
 use databend_common_ast::ast::FileLocation;
 use databend_common_ast::ast::FunctionCall as ASTFunctionCall;
@@ -199,11 +199,14 @@ impl Binder {
         let ctes_map = self.ctes_map.clone();
         if let Some(cte_info) = ctes_map.get(&table_name) {
             if bind_cte {
-                return if !cte_info.materialized {
-                    self.bind_cte(*span, bind_context, &table_name, alias, cte_info)
+                return if cte_info.materialized {
+                    self.bind_m_cte(bind_context, cte_info, &table_name, alias, span)
+                        .await
+                } else if cte_info.recursive && !self.bind_recursive_cte {
+                    self.bind_r_cte(bind_context, cte_info, &table_name, alias, span)
                         .await
                 } else {
-                    self.bind_m_cte(bind_context, cte_info, &table_name, alias, span)
+                    self.bind_cte(*span, bind_context, &table_name, alias, cte_info)
                         .await
                 };
             }
@@ -1145,7 +1148,6 @@ impl Binder {
             CteScan {
                 cte_idx: (cte_info.cte_idx, cte_info.used_count),
                 fields,
-                // It is safe to unwrap here because we have checked that the cte is materialized.
                 offsets,
                 stat: Arc::new(StatInfo::default()),
             }
@@ -1266,6 +1268,36 @@ impl Binder {
         let cte_info = self.ctes_map.get(table_name).unwrap().clone();
         let s_expr = self.bind_cte_scan(&cte_info)?;
         Ok((s_expr, new_bind_context))
+    }
+
+    #[async_backtrace::framed]
+    pub(crate) async fn bind_r_cte(
+        &mut self,
+        bind_context: &mut BindContext,
+        cte_info: &CteInfo,
+        table_name: &String,
+        alias: &Option<TableAlias>,
+        span: &Span,
+    ) -> Result<(SExpr, BindContext)> {
+        // Recursive cte's query must be a union(all)
+        match &cte_info.query.body {
+            SetExpr::SetOperation(set_expr) => {
+                if set_expr.op != SetOperator::Union {
+                    return Err(ErrorCode::SyntaxException(
+                        "Recursive CTE must contain a UNION(ALL) query".to_string(),
+                    ));
+                }
+                // Start to bind the recursive cte, it contains two parts: the non-recursive part and the recursive part.
+                // When binding the recursive part, we need to set `bind_recursive_cte` to true.
+
+            }
+            _ => {
+                return Err(ErrorCode::SyntaxException(
+                    "Recursive CTE must contain a UNION(ALL) query".to_string(),
+                ));
+            }
+        }
+        todo!()
     }
 
     #[async_backtrace::framed]

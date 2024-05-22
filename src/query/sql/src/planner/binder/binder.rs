@@ -21,6 +21,8 @@ use chrono_tz::Tz;
 use databend_common_ast::ast::format_statement;
 use databend_common_ast::ast::Hint;
 use databend_common_ast::ast::Identifier;
+use databend_common_ast::ast::SetExpr;
+use databend_common_ast::ast::SetOperator;
 use databend_common_ast::ast::Statement;
 use databend_common_ast::ast::With;
 use databend_common_ast::parser::parse_sql;
@@ -97,6 +99,8 @@ pub struct Binder {
     /// Use `IndexMap` because need to keep the insertion order
     /// Then wrap materialized ctes to main plan.
     pub ctes_map: Box<IndexMap<String, CteInfo>>,
+    /// Binding recursive cte, if meet recursive cte table name, treat it as `CteScan`
+    pub bind_recursive_cte: bool,
 }
 
 impl<'a> Binder {
@@ -117,6 +121,7 @@ impl<'a> Binder {
             eq_scalars: vec![],
             m_cte_bound_s_expr: Default::default(),
             ctes_map: Box::default(),
+            bind_recursive_cte: false,
         }
     }
 
@@ -127,6 +132,10 @@ impl<'a> Binder {
 
     pub fn set_m_cte_bound_s_expr(&mut self, cte_idx: IndexType, s_expr: SExpr) {
         self.m_cte_bound_s_expr.insert(cte_idx, s_expr);
+    }
+
+    pub fn set_bind_recursive_cte(&mut self, val: bool) {
+        self.bind_recursive_cte = val;
     }
 
     #[async_backtrace::framed]
@@ -902,6 +911,7 @@ impl<'a> Binder {
                     .collect(),
                 query: *cte.query.clone(),
                 materialized: cte.materialized,
+                recursive: with.recursive,
                 cte_idx: idx,
                 used_count: 0,
                 columns: vec![],
