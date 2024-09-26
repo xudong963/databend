@@ -49,39 +49,32 @@ impl HashJoinProbeState {
             return Ok(vec![probe_block]);
         }
         let mut result_blocks = Vec::with_capacity(input_num_rows);
-        for i in 0..input_num_rows {
+        for i in 0..build_num_rows {
             result_blocks.push(self.merge_with_constant_block(
                 &build_block,
                 &probe_block,
                 i,
-                build_num_rows,
             )?);
         }
         Ok(result_blocks)
     }
 
-    // Merge build block and probe block (1 row block)
+    // Merge build block(1 row) and probe block
     pub(crate) fn merge_with_constant_block(
         &self,
         build_block: &DataBlock,
         probe_block: &DataBlock,
         take_index: usize,
-        build_num_rows: usize,
     ) -> Result<DataBlock> {
-        let columns = Vec::with_capacity(build_block.num_columns() + probe_block.num_columns());
-        let mut replicated_probe_block = DataBlock::new(columns, build_num_rows);
-
-        for col in probe_block.columns() {
+        let mut probe_block = probe_block.clone();
+        for col in build_block.columns() {
             let value_ref = col.value.as_ref();
             let scalar = unsafe { value_ref.index_unchecked(take_index) };
-            replicated_probe_block.add_column(BlockEntry::new(
+            probe_block.add_column(BlockEntry::new(
                 col.data_type.clone(),
                 Value::Scalar(scalar.to_owned()),
             ));
         }
-        for col in build_block.columns() {
-            replicated_probe_block.add_column(col.clone());
-        }
-        Ok(replicated_probe_block)
+        Ok(probe_block)
     }
 }
